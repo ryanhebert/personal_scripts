@@ -1,9 +1,9 @@
 #!/bin/bash
-# Description: Screen session + Python venv auto-configuration for SSH logins
+# Description: tmux session + Python venv auto-configuration for SSH logins
 
 # ╔════════════════════════════════════════════════════════════════════════════╗
 # ║  SSH Login Environment                                                     ║
-# ║  Sourced by .bashrc — manages screen sessions & Python venv                ║
+# ║  Sourced by .bashrc — manages tmux sessions & Python venv                  ║
 # ║  Zero network calls. <1 second startup.                                    ║
 # ╚════════════════════════════════════════════════════════════════════════════╝
 
@@ -20,7 +20,7 @@ fi
 # --- DEFAULT CONFIGURATION ---
 BASE_DIR="$HOME/ai"
 VENV_DIR="$BASE_DIR/venv"
-SCREEN_NAME="ssh"
+SESSION_NAME="ssh"
 ATTACH_TIMEOUT=3
 REQUIREMENTS_FILE="$BASE_DIR/requirements.txt"
 LOCK_DIR="/tmp/onboard-$(id -u)"
@@ -55,7 +55,7 @@ SYM_CHECK="✔"
 SYM_CROSS="✖"
 SYM_ARROW="▶"
 SYM_GEAR="⚙"
-SYM_SCREEN="◉"
+SYM_TMUX="◉"
 SYM_DOTS="···"
 SYM_LINE="─"
 SYM_WARN="⚠"
@@ -74,8 +74,8 @@ _hr() {
 _banner() {
     echo ""
     _hr
-    echo -e "${C_BOLD}${C_BLUE}  ${SYM_SCREEN}  SSH Environment${C_RESET}"
-    echo -e "${C_GRAY}     Screen + Python venv, auto-configured${C_RESET}"
+    echo -e "${C_BOLD}${C_BLUE}  ${SYM_TMUX}  SSH Environment${C_RESET}"
+    echo -e "${C_GRAY}     tmux + Python venv, auto-configured${C_RESET}"
     _hr
 }
 
@@ -95,7 +95,7 @@ _step_dim()  { _step "$SYM_DOTS"  "$C_GRAY"    "$1"; }
 _check_root() {
     if [[ "$EUID" -eq 0 ]]; then
         _step_warn "Running as ${C_RED}root${C_RESET} — not recommended"
-        _step_dim  "Screen sessions and venvs should be per-user"
+        _step_dim  "tmux sessions and venvs should be per-user"
         echo ""
         printf "  ${C_YELLOW}${SYM_ARROW}${C_RESET}  ${C_WHITE}Continue as root? ${C_DIM}[y/N]${C_RESET} "
         read -rsn1 -t 5 answer
@@ -113,16 +113,6 @@ _preserve_ssh_agent() {
         mkdir -p "$(dirname "$SSH_SOCK_STABLE")" 2>/dev/null
         ln -sf "$SSH_AUTH_SOCK" "$SSH_SOCK_STABLE" 2>/dev/null
         export SSH_AUTH_SOCK="$SSH_SOCK_STABLE"
-    fi
-}
-
-_cleanup_dead_screens() {
-    local dead_count
-    dead_count=$(screen -ls 2>/dev/null | grep -c "Dead")
-    if [[ "$dead_count" -gt 0 ]]; then
-        _step_warn "Cleaning up ${dead_count} dead screen session(s)${SYM_DOTS}"
-        screen -wipe >/dev/null 2>&1
-        _step_ok "Dead sessions removed"
     fi
 }
 
@@ -215,20 +205,20 @@ _sysinfo() {
 }
 
 ensure_dependencies() {
-    # Only check outside screen — inside screen means we already passed this
-    if [[ -n "$STY" ]]; then return; fi
+    # Only check outside tmux — inside tmux means we already passed this
+    if [[ -n "$TMUX" ]]; then return; fi
 
-    local NEED_SCREEN=0 NEED_PYTHON=0
-    command -v screen  &>/dev/null || NEED_SCREEN=1
+    local NEED_TMUX=0 NEED_PYTHON=0
+    command -v tmux    &>/dev/null || NEED_TMUX=1
     command -v python3 &>/dev/null || NEED_PYTHON=1
 
-    if [[ "$NEED_SCREEN" -eq 0 && "$NEED_PYTHON" -eq 0 ]]; then
+    if [[ "$NEED_TMUX" -eq 0 && "$NEED_PYTHON" -eq 0 ]]; then
         return 0
     fi
 
     _step_warn "Installing missing dependencies:"
     local pkgs=()
-    [[ "$NEED_SCREEN" -eq 1 ]]  && pkgs+=("screen")  && _step_dim "  screen"
+    [[ "$NEED_TMUX" -eq 1 ]]    && pkgs+=("tmux")    && _step_dim "  tmux"
     [[ "$NEED_PYTHON" -eq 1 ]]  && pkgs+=("python3") && _step_dim "  python3"
 
     if command -v apt-get &>/dev/null; then
@@ -253,27 +243,30 @@ ensure_dependencies() {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  MAIN: Screen Session Management
+#  MAIN: tmux Session Management
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── Outside Screen: auto-attach flow ─────────────────────────────────────────
+# ── Outside tmux: auto-attach flow ───────────────────────────────────────────
 
-if [[ -z "$STY" ]]; then
+if [[ -z "$TMUX" ]]; then
     _check_root || return
     mkdir -p "$BASE_DIR"
     _preserve_ssh_agent
     ensure_dependencies || return
-    _cleanup_dead_screens
 
-    local_existing=$(screen -ls 2>/dev/null | grep -c "$SCREEN_NAME")
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        local_existing=1
+    else
+        local_existing=0
+    fi
 
     _banner
     echo ""
 
     if [[ "$local_existing" -gt 0 ]]; then
-        _step_info "Existing session found: ${C_CYAN}${SCREEN_NAME}${C_RESET}"
+        _step_info "Existing session found: ${C_CYAN}${SESSION_NAME}${C_RESET}"
     else
-        _step_info "Creating new session: ${C_CYAN}${SCREEN_NAME}${C_RESET}"
+        _step_info "Creating new session: ${C_CYAN}${SESSION_NAME}${C_RESET}"
     fi
 
     echo ""
@@ -281,19 +274,19 @@ if [[ -z "$STY" ]]; then
     if _countdown "$ATTACH_TIMEOUT"; then
         echo ""
         _step_warn "Cancelled — normal shell session"
-        _step_dim  "To attach manually:  ${C_CYAN}screen -dRR ${SCREEN_NAME}${C_RESET}"
+        _step_dim  "To attach manually:  ${C_CYAN}tmux new-session -A -s ${SESSION_NAME}${C_RESET}"
         _hr
         echo ""
     else
         _step_ok "Attaching${SYM_DOTS}"
         echo ""
-        exec screen -dRR "$SCREEN_NAME"
+        exec tmux new-session -A -s "$SESSION_NAME"
     fi
 fi
 
-# ── Inside Screen: venv + workspace setup ────────────────────────────────────
+# ── Inside tmux: venv + workspace setup ──────────────────────────────────────
 
-if [[ -n "$STY" && "$STY" == *"$SCREEN_NAME"* ]]; then
+if [[ -n "$TMUX" ]]; then
     _acquire_lock
     mkdir -p "$BASE_DIR"
     _preserve_ssh_agent
@@ -322,9 +315,6 @@ if [[ -n "$STY" && "$STY" == *"$SCREEN_NAME"* ]]; then
     _release_lock
     cd "$BASE_DIR" || true
 
-    # Ensure 256-color support inside screen
-    export TERM=screen-256color
-
     # Custom prompt
     export PS1="\[${C_RESET}\]\[${C_GREEN}\](venv)\[${C_RESET}\] \[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ "
 
@@ -334,7 +324,7 @@ if [[ -n "$STY" && "$STY" == *"$SCREEN_NAME"* ]]; then
         echo ""
         _banner
         echo ""
-        _step_ok "Screen session:  ${C_CYAN}${SCREEN_NAME}${C_RESET}"
+        _step_ok "tmux session:    ${C_CYAN}${SESSION_NAME}${C_RESET}"
         _step_ok "Python venv:     ${C_CYAN}${VENV_DIR}${C_RESET}"
         _step_ok "Workspace:       ${C_CYAN}${BASE_DIR}${C_RESET}"
 
@@ -347,7 +337,7 @@ if [[ -n "$STY" && "$STY" == *"$SCREEN_NAME"* ]]; then
         _sysinfo
 
         echo ""
-        _step_dim "Detach: ${C_WHITE}Ctrl-A D${C_RESET}${C_GRAY}  │  New window: ${C_WHITE}Ctrl-A C${C_RESET}${C_GRAY}  │  List: ${C_WHITE}Ctrl-A \"${C_RESET}"
+        _step_dim "Detach: ${C_WHITE}Ctrl-B D${C_RESET}${C_GRAY}  │  New window: ${C_WHITE}Ctrl-B C${C_RESET}${C_GRAY}  │  List: ${C_WHITE}Ctrl-B W${C_RESET}"
         _hr
         echo ""
     fi
