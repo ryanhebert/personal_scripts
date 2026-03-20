@@ -322,6 +322,9 @@ if [[ -n "$STY" && "$STY" == *"$SCREEN_NAME"* ]]; then
     _release_lock
     cd "$BASE_DIR" || true
 
+    # Ensure 256-color support inside screen
+    export TERM=screen-256color
+
     # Custom prompt
     export PS1="\[${C_RESET}\]\[${C_GREEN}\](venv)\[${C_RESET}\] \[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ "
 
