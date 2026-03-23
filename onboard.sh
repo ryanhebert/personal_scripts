@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-ONBOARD_VERSION="0.6.2"
+ONBOARD_VERSION="0.6.3"
 GITHUB_REPO="ryanhebert/personal_scripts"
 REPO_DIR="$HOME/personal_scripts"
 SCRIPTS_DIR="$REPO_DIR/scripts"
@@ -166,8 +166,8 @@ _checkbox_select() {
             $'\x1b')
                 read -rsn2 key
                 case "$key" in
-                    '[A') if ((cursor > 0)); then ((cursor--)); fi ;;
-                    '[B') if ((cursor < count - 1)); then ((cursor++)); fi ;;
+                    '[A') if ((cursor > 0)); then cursor=$((cursor - 1)); fi ;;
+                    '[B') if ((cursor < count - 1)); then cursor=$((cursor + 1)); fi ;;
                 esac
                 ;;
             ' ')

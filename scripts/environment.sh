@@ -247,8 +247,8 @@ _checkbox_select() {
             $'\x1b')
                 read -rsn2 key
                 case "$key" in
-                    '[A') if ((cursor > 0)); then ((cursor--)); fi ;;
-                    '[B') if ((cursor < count - 1)); then ((cursor++)); fi ;;
+                    '[A') if ((cursor > 0)); then cursor=$((cursor - 1)); fi ;;
+                    '[B') if ((cursor < count - 1)); then cursor=$((cursor + 1)); fi ;;
                 esac
                 ;;
             ' ')
