@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-ONBOARD_VERSION="0.6.1"
+ONBOARD_VERSION="0.6.2"
 GITHUB_REPO="ryanhebert/personal_scripts"
 REPO_DIR="$HOME/personal_scripts"
 SCRIPTS_DIR="$REPO_DIR/scripts"
@@ -560,7 +560,8 @@ _do_update() {
     local before after
     before=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)
 
-    if git -C "$REPO_DIR" pull --ff-only 2>/dev/null; then
+    git -C "$REPO_DIR" fetch origin 2>&1 | while read -r line; do _step_dim "$line"; done
+    if git -C "$REPO_DIR" pull --ff-only; then
         after=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)
         if [[ "$before" == "$after" ]]; then
             _step_ok "Already up to date"
@@ -751,7 +752,8 @@ _auto_update() {
     local before after
     before=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)
 
-    if git -C "$REPO_DIR" pull --ff-only 2>/dev/null; then
+    git -C "$REPO_DIR" fetch origin 2>&1 | while read -r line; do _step_dim "$line"; done
+    if git -C "$REPO_DIR" pull --ff-only; then
         after=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)
         if [[ "$before" != "$after" ]]; then
             _step_ok "Updated ${C_DIM}(${before:0:7} → ${after:0:7})${C_RESET}"
