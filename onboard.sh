@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-ONBOARD_VERSION="0.6.0"
+ONBOARD_VERSION="0.6.1"
 GITHUB_REPO="ryanhebert/personal_scripts"
 REPO_DIR="$HOME/personal_scripts"
 SCRIPTS_DIR="$REPO_DIR/scripts"
