@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-ONBOARD_VERSION="5.0.0"
+ONBOARD_VERSION="0.6.0"
 GITHUB_REPO="ryanhebert/personal_scripts"
 REPO_DIR="$HOME/personal_scripts"
 SCRIPTS_DIR="$REPO_DIR/scripts"
@@ -821,6 +821,7 @@ _show_help() {
     echo -e "    ${C_CYAN}--update, -u${C_RESET}    Pull latest changes from repo"
     echo -e "    ${C_CYAN}--status, -s${C_RESET}    Show auth, repo, and script status"
     echo -e "    ${C_CYAN}--uninstall${C_RESET}     Remove source line, prompt to clean up"
+    echo -e "    ${C_CYAN}--version, -v${C_RESET}   Show version"
     echo -e "    ${C_CYAN}--help, -h${C_RESET}      Show this help message"
     echo ""
     _hr
@@ -830,11 +831,14 @@ _show_help() {
 
 main() {
     # Auto-update before any command (except --help)
-    if [[ "${1:-}" != "--help" && "${1:-}" != "-h" ]]; then
+    if [[ "${1:-}" != "--help" && "${1:-}" != "-h" && "${1:-}" != "--version" && "${1:-}" != "-v" ]]; then
         _auto_update "$@"
     fi
 
     case "${1:-}" in
+        --version|-v)
+            echo "onboard v${ONBOARD_VERSION}"
+            ;;
         --help|-h)
             _show_help
             ;;
