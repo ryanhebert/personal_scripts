@@ -166,8 +166,8 @@ _checkbox_select() {
             $'\x1b')
                 read -rsn2 key
                 case "$key" in
-                    '[A') ((cursor > 0)) && ((cursor--)) ;;
-                    '[B') ((cursor < count - 1)) && ((cursor++)) ;;
+                    '[A') if ((cursor > 0)); then ((cursor--)); fi ;;
+                    '[B') if ((cursor < count - 1)); then ((cursor++)); fi ;;
                 esac
                 ;;
             ' ')
@@ -755,6 +755,17 @@ _auto_update() {
         after=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)
         if [[ "$before" != "$after" ]]; then
             _step_ok "Updated ${C_DIM}(${before:0:7} → ${after:0:7})${C_RESET}"
+
+            # If running from outside the repo, update the local copy
+            local running_script
+            running_script=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")
+            local repo_script
+            repo_script=$(readlink -f "$REPO_DIR/onboard.sh" 2>/dev/null || realpath "$REPO_DIR/onboard.sh" 2>/dev/null || echo "$REPO_DIR/onboard.sh")
+            if [[ "$running_script" != "$repo_script" && -f "$REPO_DIR/onboard.sh" ]]; then
+                cp "$REPO_DIR/onboard.sh" "$running_script"
+                _step_ok "Updated local copy: ${C_DIM}${running_script}${C_RESET}"
+            fi
+
             _step_info "Re-running with latest version${SYM_DOTS}"
             exec bash "$REPO_DIR/onboard.sh" "$@"
         else
