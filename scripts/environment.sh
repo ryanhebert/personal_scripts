@@ -204,31 +204,125 @@ _sysinfo() {
     echo -e "  ${C_GRAY}└───────────────────────────────────────────────────────┘${C_RESET}"
 }
 
+_checkbox_select() {
+    # Interactive checkbox selector — arrow keys to navigate, space to toggle, enter to confirm
+    # Usage: _checkbox_select [--default-off] item1 item2 ...
+    # Returns selected packages in SELECTED_PKGS array.
+    local default_state=1
+    if [[ "${1:-}" == "--default-off" ]]; then
+        default_state=0
+        shift
+    fi
+    local -a options=("$@")
+    local -a selected=()
+    local cursor=0
+    local count=${#options[@]}
+
+    for ((i = 0; i < count; i++)); do selected[$i]=$default_state; done
+
+    # Lines we render: count + 1 blank + 1 hint = count+2
+    local total_lines=$((count + 2))
+
+    # Hide cursor
+    printf "\033[?25l"
+
+    # Draw initial list
+    for ((i = 0; i < count; i++)); do
+        local marker icon color
+        if [[ $i -eq $cursor ]]; then marker="${C_CYAN}▸${C_RESET}"; else marker=" "; fi
+        if [[ ${selected[$i]} -eq 1 ]]; then
+            icon="${C_GREEN}☑${C_RESET}" ; color="${C_WHITE}"
+        else
+            icon="${C_GRAY}☐${C_RESET}" ; color="${C_GRAY}"
+        fi
+        echo -e "  ${marker} ${icon}  ${color}${options[$i]}${C_RESET}"
+    done
+    echo ""
+    echo -e "  ${C_DIM}↑↓ navigate  ␣ toggle  ↵ confirm${C_RESET}"
+
+    while true; do
+        local key
+        IFS= read -rsn1 key
+        case "$key" in
+            $'\x1b')
+                read -rsn2 key
+                case "$key" in
+                    '[A') ((cursor > 0)) && ((cursor--)) ;;
+                    '[B') ((cursor < count - 1)) && ((cursor++)) ;;
+                esac
+                ;;
+            ' ')
+                selected[$cursor]=$(( 1 - ${selected[$cursor]} ))
+                ;;
+            '')
+                break
+                ;;
+            *)
+                continue
+                ;;
+        esac
+
+        # Move cursor up and redraw
+        printf "\033[%dA\r" "$total_lines"
+        for ((i = 0; i < count; i++)); do
+            local marker icon color
+            if [[ $i -eq $cursor ]]; then marker="${C_CYAN}▸${C_RESET}"; else marker=" "; fi
+            if [[ ${selected[$i]} -eq 1 ]]; then
+                icon="${C_GREEN}☑${C_RESET}" ; color="${C_WHITE}"
+            else
+                icon="${C_GRAY}☐${C_RESET}" ; color="${C_GRAY}"
+            fi
+            printf "\033[2K"
+            echo -e "  ${marker} ${icon}  ${color}${options[$i]}${C_RESET}"
+        done
+        printf "\033[2K"
+        echo ""
+        printf "\033[2K"
+        echo -e "  ${C_DIM}↑↓ navigate  ␣ toggle  ↵ confirm${C_RESET}"
+    done
+
+    # Show cursor
+    printf "\033[?25h"
+
+    SELECTED_PKGS=()
+    for ((i = 0; i < count; i++)); do
+        if [[ ${selected[$i]} -eq 1 ]]; then
+            SELECTED_PKGS+=("${options[$i]}")
+        fi
+    done
+}
+
 ensure_dependencies() {
     # Only check outside tmux — inside tmux means we already passed this
     if [[ -n "$TMUX" ]]; then return; fi
 
-    local NEED_TMUX=0 NEED_PYTHON=0
-    command -v tmux    &>/dev/null || NEED_TMUX=1
-    command -v python3 &>/dev/null || NEED_PYTHON=1
+    local -a missing=()
+    command -v tmux    &>/dev/null || missing+=("tmux")
+    command -v python3 &>/dev/null || missing+=("python3")
 
-    if [[ "$NEED_TMUX" -eq 0 && "$NEED_PYTHON" -eq 0 ]]; then
+    if [[ ${#missing[@]} -eq 0 ]]; then
         return 0
     fi
 
-    _step_warn "Installing missing dependencies:"
-    local pkgs=()
-    [[ "$NEED_TMUX" -eq 1 ]]    && pkgs+=("tmux")    && _step_dim "  tmux"
-    [[ "$NEED_PYTHON" -eq 1 ]]  && pkgs+=("python3") && _step_dim "  python3"
+    _step_warn "Missing dependencies detected"
+    echo ""
+    _checkbox_select "${missing[@]}"
+
+    if [[ ${#SELECTED_PKGS[@]} -eq 0 ]]; then
+        _step_dim "No packages selected — skipping install"
+        return 0
+    fi
+
+    _step_info "Installing: ${C_CYAN}${SELECTED_PKGS[*]}${C_RESET}"
 
     if command -v apt-get &>/dev/null; then
-        sudo apt-get update -qq && sudo apt-get install -y -qq "${pkgs[@]}"
+        sudo apt-get update -qq && sudo apt-get install -y -qq "${SELECTED_PKGS[@]}"
     elif command -v dnf &>/dev/null; then
-        sudo dnf install -y -q "${pkgs[@]}"
+        sudo dnf install -y -q "${SELECTED_PKGS[@]}"
     elif command -v yum &>/dev/null; then
-        sudo yum install -y -q "${pkgs[@]}"
+        sudo yum install -y -q "${SELECTED_PKGS[@]}"
     elif command -v brew &>/dev/null; then
-        brew install "${pkgs[@]}"
+        brew install "${SELECTED_PKGS[@]}"
     else
         _step_fail "No supported package manager found (apt/dnf/yum/brew)"
         return 1
@@ -342,3 +436,11 @@ if [[ -n "$TMUX" ]]; then
         echo ""
     fi
 fi
+
+# ── Shell Aliases & PATH ──────────────────────────────────────────────────────
+
+alias ls='ls -A --color=auto'
+
+# CLI tool paths (conditional — only added if installed)
+[[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
+[[ -d "$HOME/.opencode/bin" ]] && export PATH="$HOME/.opencode/bin:$PATH"

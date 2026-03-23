@@ -16,6 +16,8 @@ ENV_SCRIPT="$SCRIPTS_DIR/environment.sh"
 SOURCE_LINE="source \"$ENV_SCRIPT\"  # [ONBOARD]"
 MARKER="# [ONBOARD]"
 OLD_MARKER="# [SSH ONBOARDING]"
+BLOCK_BEGIN="# ── Onboard Environment [begin] ───────────────────────────────"
+BLOCK_END="# ── Onboard Environment [end] ─────────────────────────────────"
 
 # ── Colors & Symbols ─────────────────────────────────────────────────────────
 
@@ -76,6 +78,135 @@ _detect_rc_file() {
     else
         echo "$HOME/.bashrc"
     fi
+}
+
+# ── RC File Cleanup ──────────────────────────────────────────────────────────
+
+_cleanup_rc() {
+    # Remove all [ONBOARD] lines, old [SSH ONBOARDING] lines, and our block markers
+    local rc_file="$1"
+    [[ -f "$rc_file" ]] || return 0
+
+    if ! grep -qF "$MARKER" "$rc_file" && ! grep -qF "$OLD_MARKER" "$rc_file" \
+       && ! grep -qF "$BLOCK_BEGIN" "$rc_file"; then
+        return 0
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    local in_block=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == "$BLOCK_BEGIN" ]]; then
+            in_block=1
+            continue
+        fi
+        if [[ "$line" == "$BLOCK_END" ]]; then
+            in_block=0
+            continue
+        fi
+        [[ "$in_block" -eq 1 ]] && continue
+        # Skip stray tagged lines (duplicates from older versions)
+        [[ "$line" == *"$MARKER"* ]] && continue
+        [[ "$line" == *"$OLD_MARKER"* ]] && continue
+        echo "$line"
+    done < "$rc_file" > "$tmp_file"
+
+    mv "$tmp_file" "$rc_file"
+}
+
+_write_rc_block() {
+    # Write a clean source-line block into the RC file
+    local rc_file="$1" source_line="$2"
+    {
+        echo ""
+        echo "$BLOCK_BEGIN"
+        echo "$source_line"
+        echo "$BLOCK_END"
+    } >> "$rc_file"
+}
+
+# ── Interactive Checkbox Selector ────────────────────────────────────────────
+
+_checkbox_select() {
+    # Arrow keys to navigate, space to toggle, enter to confirm
+    # Usage: _checkbox_select [--default-off] item1 item2 ...
+    # Returns selected items in SELECTED_PKGS array.
+    local default_state=1
+    if [[ "${1:-}" == "--default-off" ]]; then
+        default_state=0
+        shift
+    fi
+    local -a options=("$@")
+    local -a selected=()
+    local cursor=0
+    local count=${#options[@]}
+
+    for ((i = 0; i < count; i++)); do selected[$i]=$default_state; done
+
+    local total_lines=$((count + 2))
+    printf "\033[?25l"
+
+    for ((i = 0; i < count; i++)); do
+        local marker icon color
+        if [[ $i -eq $cursor ]]; then marker="${C_CYAN}▸${C_RESET}"; else marker=" "; fi
+        if [[ ${selected[$i]} -eq 1 ]]; then
+            icon="${C_GREEN}☑${C_RESET}" ; color="${C_WHITE}"
+        else
+            icon="${C_GRAY}☐${C_RESET}" ; color="${C_GRAY}"
+        fi
+        echo -e "  ${marker} ${icon}  ${color}${options[$i]}${C_RESET}"
+    done
+    echo ""
+    echo -e "  ${C_DIM}↑↓ navigate  ␣ toggle  ↵ confirm${C_RESET}"
+
+    while true; do
+        local key
+        IFS= read -rsn1 key
+        case "$key" in
+            $'\x1b')
+                read -rsn2 key
+                case "$key" in
+                    '[A') ((cursor > 0)) && ((cursor--)) ;;
+                    '[B') ((cursor < count - 1)) && ((cursor++)) ;;
+                esac
+                ;;
+            ' ')
+                selected[$cursor]=$(( 1 - ${selected[$cursor]} ))
+                ;;
+            '')
+                break
+                ;;
+            *)
+                continue
+                ;;
+        esac
+
+        printf "\033[%dA\r" "$total_lines"
+        for ((i = 0; i < count; i++)); do
+            local marker icon color
+            if [[ $i -eq $cursor ]]; then marker="${C_CYAN}▸${C_RESET}"; else marker=" "; fi
+            if [[ ${selected[$i]} -eq 1 ]]; then
+                icon="${C_GREEN}☑${C_RESET}" ; color="${C_WHITE}"
+            else
+                icon="${C_GRAY}☐${C_RESET}" ; color="${C_GRAY}"
+            fi
+            printf "\033[2K"
+            echo -e "  ${marker} ${icon}  ${color}${options[$i]}${C_RESET}"
+        done
+        printf "\033[2K"
+        echo ""
+        printf "\033[2K"
+        echo -e "  ${C_DIM}↑↓ navigate  ␣ toggle  ↵ confirm${C_RESET}"
+    done
+
+    printf "\033[?25h"
+
+    SELECTED_PKGS=()
+    for ((i = 0; i < count; i++)); do
+        if [[ ${selected[$i]} -eq 1 ]]; then
+            SELECTED_PKGS+=("${options[$i]}")
+        fi
+    done
 }
 
 # ── Step 1: Install gh CLI ───────────────────────────────────────────────────
@@ -147,7 +278,127 @@ _install_qrencode() {
     fi
 }
 
-# ── Step 3: Authenticate with GitHub ─────────────────────────────────────────
+# ── Step 3: AI CLI Tools (optional) ──────────────────────────────────────────
+
+_ensure_node() {
+    if command -v node &>/dev/null && command -v npm &>/dev/null; then
+        return 0
+    fi
+
+    _step_info "Installing Node.js (required for npm-based tools)${SYM_DOTS}"
+
+    if command -v apt-get &>/dev/null; then
+        curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+        sudo apt-get install -y -qq nodejs
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y -q nodejs npm
+    elif command -v yum &>/dev/null; then
+        sudo yum install -y -q nodejs npm
+    elif command -v brew &>/dev/null; then
+        brew install node
+    else
+        _step_fail "Could not install Node.js — install manually"
+        return 1
+    fi
+
+    if command -v node &>/dev/null; then
+        _step_ok "Node.js installed ${C_DIM}($(node --version))${C_RESET}"
+    else
+        _step_fail "Node.js installation failed"
+        return 1
+    fi
+}
+
+_install_gemini_cli() {
+    if command -v gemini &>/dev/null; then
+        _step_ok "Gemini CLI already installed"
+        return 0
+    fi
+    _ensure_node || return 1
+    _step_info "Installing Gemini CLI${SYM_DOTS}"
+    npm install -g @google/gemini-cli 2>/dev/null
+    if command -v gemini &>/dev/null; then
+        _step_ok "Gemini CLI installed"
+    else
+        _step_fail "Gemini CLI installation failed"
+        return 1
+    fi
+}
+
+_install_codex_cli() {
+    if command -v codex &>/dev/null; then
+        _step_ok "Codex CLI already installed"
+        return 0
+    fi
+    _ensure_node || return 1
+    _step_info "Installing Codex CLI${SYM_DOTS}"
+    npm install -g @openai/codex 2>/dev/null
+    if command -v codex &>/dev/null; then
+        _step_ok "Codex CLI installed"
+    else
+        _step_fail "Codex CLI installation failed"
+        return 1
+    fi
+}
+
+_install_claude_code() {
+    if command -v claude &>/dev/null; then
+        _step_ok "Claude Code already installed"
+        return 0
+    fi
+    _step_info "Installing Claude Code${SYM_DOTS}"
+    curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null
+    # Refresh PATH so we can verify
+    export PATH="$HOME/.local/bin:$PATH"
+    if command -v claude &>/dev/null; then
+        _step_ok "Claude Code installed"
+    else
+        _step_fail "Claude Code installation failed"
+        return 1
+    fi
+}
+
+_install_opencode() {
+    if command -v opencode &>/dev/null; then
+        _step_ok "OpenCode already installed"
+        return 0
+    fi
+    _step_info "Installing OpenCode${SYM_DOTS}"
+    curl -fsSL https://opencode.ai/install | bash 2>/dev/null
+    # Refresh PATH so we can verify
+    export PATH="$HOME/.opencode/bin:$PATH"
+    if command -v opencode &>/dev/null; then
+        _step_ok "OpenCode installed"
+    else
+        _step_fail "OpenCode installation failed"
+        return 1
+    fi
+}
+
+_install_cli_tools() {
+    echo -e "  ${C_BOLD}${C_WHITE}AI CLI Tools${C_RESET}  ${C_DIM}(optional)${C_RESET}"
+    echo ""
+
+    local -a tools=("Gemini CLI" "Codex CLI" "Claude Code" "OpenCode")
+    _checkbox_select --default-off "${tools[@]}"
+
+    if [[ ${#SELECTED_PKGS[@]} -eq 0 ]]; then
+        _step_dim "No CLI tools selected — skipping"
+        return 0
+    fi
+
+    echo ""
+    for pkg in "${SELECTED_PKGS[@]}"; do
+        case "$pkg" in
+            "Gemini CLI")  _install_gemini_cli  ;;
+            "Codex CLI")   _install_codex_cli   ;;
+            "Claude Code") _install_claude_code ;;
+            "OpenCode")    _install_opencode    ;;
+        esac
+    done
+}
+
+# ── Step 4: Authenticate with GitHub ─────────────────────────────────────────
 
 _authenticate() {
     if gh auth status &>/dev/null; then
@@ -183,7 +434,7 @@ _authenticate() {
     fi
 }
 
-# ── Step 4: Clone repo ───────────────────────────────────────────────────────
+# ── Step 5: Clone repo ───────────────────────────────────────────────────────
 
 _clone_repo() {
     if [[ -d "$REPO_DIR/.git" ]]; then
@@ -201,34 +452,18 @@ _clone_repo() {
     fi
 }
 
-# ── Step 5: Install source line in shell RC ──────────────────────────────────
+# ── Step 6: Install source line in shell RC ──────────────────────────────────
 
 _install_source_line() {
     local rc_file
     rc_file=$(_detect_rc_file)
 
-    # Check if already installed with current marker
-    if [[ -f "$rc_file" ]] && grep -qF "$MARKER" "$rc_file"; then
-        # Verify it points to the right script
-        if grep -qF "$ENV_SCRIPT" "$rc_file"; then
-            _step_ok "Source line already in ${C_DIM}$(basename "$rc_file")${C_RESET}"
-            return 0
-        else
-            # Update the source path
-            local tmp_file
-            tmp_file=$(mktemp)
-            grep -v "$MARKER" "$rc_file" > "$tmp_file"
-            echo "$SOURCE_LINE" >> "$tmp_file"
-            mv "$tmp_file" "$rc_file"
-            _step_ok "Updated source line in ${C_DIM}$(basename "$rc_file")${C_RESET}"
-            return 0
-        fi
-    fi
+    # Clean up any existing entries (duplicates, old markers, stale blocks)
+    _cleanup_rc "$rc_file"
 
-    # Append source line
-    echo "" >> "$rc_file"
-    echo "$SOURCE_LINE" >> "$rc_file"
-    _step_ok "Added source line to ${C_DIM}$(basename "$rc_file")${C_RESET}"
+    # Write a single clean block
+    _write_rc_block "$rc_file" "$SOURCE_LINE"
+    _step_ok "Source line installed in ${C_DIM}$(basename "$rc_file")${C_RESET}"
 }
 
 # ── Script Discovery ─────────────────────────────────────────────────────────
@@ -299,19 +534,10 @@ _show_menu() {
         local rc_file
         rc_file=$(_detect_rc_file)
 
-        # Update source line to point to selected script
+        # Clean up any existing entries, then write selected script
         local new_source_line="source \"${selected}\"  $MARKER"
-
-        if [[ -f "$rc_file" ]] && grep -qF "$MARKER" "$rc_file"; then
-            local tmp_file
-            tmp_file=$(mktemp)
-            grep -v "$MARKER" "$rc_file" > "$tmp_file"
-            echo "$new_source_line" >> "$tmp_file"
-            mv "$tmp_file" "$rc_file"
-        else
-            echo "" >> "$rc_file"
-            echo "$new_source_line" >> "$rc_file"
-        fi
+        _cleanup_rc "$rc_file"
+        _write_rc_block "$rc_file" "$new_source_line"
 
         _step_ok "Configured ${C_CYAN}${selected_name}${C_RESET} in $(basename "$rc_file")"
     else
@@ -397,13 +623,33 @@ _show_status() {
     fi
     echo ""
 
+    # CLI tools
+    echo -e "  ${C_BOLD}AI CLI Tools${C_RESET}"
+    local _found_tool=0
+    if command -v gemini &>/dev/null; then
+        _step_ok "Gemini CLI"; _found_tool=1
+    fi
+    if command -v codex &>/dev/null; then
+        _step_ok "Codex CLI"; _found_tool=1
+    fi
+    if command -v claude &>/dev/null; then
+        _step_ok "Claude Code"; _found_tool=1
+    fi
+    if command -v opencode &>/dev/null; then
+        _step_ok "OpenCode"; _found_tool=1
+    fi
+    if [[ "$_found_tool" -eq 0 ]]; then
+        _step_dim "None installed  ${C_GRAY}(run: $0 --tools)${C_RESET}"
+    fi
+    echo ""
+
     # Source line
     echo -e "  ${C_BOLD}Shell Integration${C_RESET}"
     local rc_file
     rc_file=$(_detect_rc_file)
-    if [[ -f "$rc_file" ]] && grep -qF "$MARKER" "$rc_file"; then
+    if [[ -f "$rc_file" ]] && (grep -qF "$MARKER" "$rc_file" || grep -qF "$BLOCK_BEGIN" "$rc_file"); then
         local sourced_script
-        sourced_script=$(grep "$MARKER" "$rc_file" | grep -o 'source "[^"]*"' | sed 's/source "//;s/"$//')
+        sourced_script=$(grep "$MARKER" "$rc_file" | grep -o 'source "[^"]*"' | head -1 | sed 's/source "//;s/"$//')
         _step_ok "Source line in $(basename "$rc_file") ${C_DIM}→ $(basename "$sourced_script" 2>/dev/null)${C_RESET}"
     else
         _step_warn "No source line in $(basename "$rc_file")"
@@ -420,14 +666,11 @@ _do_uninstall() {
     echo -e "  ${C_BOLD}${C_RED}Uninstall${C_RESET}"
     echo ""
 
-    # Remove source line
+    # Remove source line and block markers
     local rc_file
     rc_file=$(_detect_rc_file)
-    if [[ -f "$rc_file" ]] && grep -qF "$MARKER" "$rc_file"; then
-        local tmp_file
-        tmp_file=$(mktemp)
-        grep -v "$MARKER" "$rc_file" > "$tmp_file"
-        mv "$tmp_file" "$rc_file"
+    if [[ -f "$rc_file" ]] && (grep -qF "$MARKER" "$rc_file" || grep -qF "$BLOCK_BEGIN" "$rc_file"); then
+        _cleanup_rc "$rc_file"
         _step_ok "Removed source line from $(basename "$rc_file")"
     else
         _step_dim "No source line found in $(basename "$rc_file")"
@@ -471,12 +714,9 @@ _migrate_from_v4() {
     if [[ -f "$rc_file" ]] && grep -qF "$OLD_MARKER" "$rc_file"; then
         _step_info "Migrating from v4${SYM_DOTS}"
 
-        # Replace old source line with new one
-        local tmp_file
-        tmp_file=$(mktemp)
-        grep -v "$OLD_MARKER" "$rc_file" > "$tmp_file"
-        echo "$SOURCE_LINE" >> "$tmp_file"
-        mv "$tmp_file" "$rc_file"
+        # Clean up old markers and install fresh block
+        _cleanup_rc "$rc_file"
+        _write_rc_block "$rc_file" "$SOURCE_LINE"
         _step_ok "Updated source line in $(basename "$rc_file")"
         migrated=1
     fi
@@ -518,19 +758,23 @@ _bootstrap() {
     _install_qrencode
     echo ""
 
-    # Step 3: Authenticate
+    # Step 3: AI CLI tools (optional)
+    _install_cli_tools
+    echo ""
+
+    # Step 4: Authenticate
     _authenticate || return 1
     echo ""
 
-    # Step 4: Clone repo
+    # Step 5: Clone repo
     _clone_repo || return 1
     echo ""
 
-    # Step 5: Install source line
+    # Step 6: Install source line
     _install_source_line
     echo ""
 
-    # Step 6: Show script menu
+    # Step 7: Show script menu
     _show_menu
 
     echo ""
@@ -551,6 +795,7 @@ _show_help() {
     echo -e "  ${C_BOLD}Options:${C_RESET}"
     echo -e "    ${C_CYAN}(default)${C_RESET}       Run bootstrap flow (install, auth, clone, configure)"
     echo -e "    ${C_CYAN}--menu, -m${C_RESET}      Re-show the script picker menu"
+    echo -e "    ${C_CYAN}--tools, -t${C_RESET}     Install/manage AI CLI tools"
     echo -e "    ${C_CYAN}--update, -u${C_RESET}    Pull latest changes from repo"
     echo -e "    ${C_CYAN}--status, -s${C_RESET}    Show auth, repo, and script status"
     echo -e "    ${C_CYAN}--uninstall${C_RESET}     Remove source line, prompt to clean up"
@@ -568,6 +813,13 @@ main() {
             ;;
         --menu|-m)
             _show_menu
+            ;;
+        --tools|-t)
+            _banner
+            echo ""
+            _install_cli_tools
+            echo ""
+            _hr
             ;;
         --update|-u)
             _banner
