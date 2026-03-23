@@ -743,6 +743,28 @@ _migrate_from_v4() {
 
 # ── Bootstrap Flow ────────────────────────────────────────────────────────────
 
+_auto_update() {
+    # Pull latest on subsequent runs; skip silently on first run
+    [[ -d "$REPO_DIR/.git" ]] || return 0
+
+    _step_info "Checking for updates${SYM_DOTS}"
+    local before after
+    before=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)
+
+    if git -C "$REPO_DIR" pull --ff-only 2>/dev/null; then
+        after=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)
+        if [[ "$before" != "$after" ]]; then
+            _step_ok "Updated ${C_DIM}(${before:0:7} → ${after:0:7})${C_RESET}"
+            _step_info "Re-running with latest version${SYM_DOTS}"
+            exec bash "$REPO_DIR/onboard.sh" "$@"
+        else
+            _step_ok "Already up to date"
+        fi
+    else
+        _step_warn "Auto-update failed — continuing with current version"
+    fi
+}
+
 _bootstrap() {
     _banner
     echo ""
@@ -807,6 +829,11 @@ _show_help() {
 # ── CLI Entry Point ──────────────────────────────────────────────────────────
 
 main() {
+    # Auto-update before any command (except --help)
+    if [[ "${1:-}" != "--help" && "${1:-}" != "-h" ]]; then
+        _auto_update "$@"
+    fi
+
     case "${1:-}" in
         --help|-h)
             _show_help
